@@ -3,9 +3,12 @@
             [clojure.string :as str]
             [clojure.data.csv :as csv]
             [clj-http.client :as http]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [slingshot.slingshot :refer [try+]]))
 
-(def base-url "localhost:8080")
+(def base-listing-service-url "localhost:8080"
+;"listingsvc001.useast2.rentpath.com"
+)
 
 (defn raw-locations
   [locations-uri]
@@ -30,25 +33,22 @@
       (csv/write-csv w
                      (cons header data)))))
 
-(defn whitespace-to-dash
+(defn dashify-string
   [s]
   (-> s
-      (str/replace #"[.]" "")
-      (str/replace  #" |[(]" "-")))
-
-(defn listing-request
-  [listing-srvc-base-url city state search-test]
-  (let [formated-city (whitespace-to-dash city)
-        formated-state (whitespace-to-dash state)]
-    (format "http://%s/v2/listings?criteria[citySlug]=%s&criteria[stateSlug]=%s&searchTest=%s"
-            listing-srvc-base-url formated-city formated-state search-test)))
+      str/trim
+      (str/replace #"[.|'|)]" "")
+      (str/replace  #" |[(|]" "-")))
 
 (defn get-listings
-  [base-url city state search-test]
-  (json/parse-string 
-   (:body(http/get (listing-request base-url city state search-test) 
-             {:headers {"X-Application-ID" "ag/www"}}
-             {:accept :json}))))
+  [base-url request]
+  (try+
+   (json/parse-string
+    (:body (http/get request 
+                     {:headers {"X-Application-ID" "ag/www"}}
+                     {:accept :json})))
+   (catch [:status 500]
+    {:meta {:total "Err-500"}})))
 
 (defn get-listings-total
   [listings-map]
@@ -65,10 +65,3 @@
                     search-tests)]
            (into location (vec listings-by-search-test))))
        locations-map))
-
-(defn process-search-tests
-  [raw-locations-uri search-tests outfile-uri]
-  (let [read-locations (raw-locations raw-locations-uri)
-        locations-map (csv->map read-locations)
-        processed-results (update-locations-with-search-test-counts base-url locations-map search-tests)]
-    (write-map-to-csv processed-results outfile-uri)))
